@@ -1,0 +1,102 @@
+#!/usr/bin/env perl
+# vim: ts=4 sw=4 noexpandtab
+
+use Mojo::Base -strict;
+use Mojo::UserAgent;
+use Getopt::Long qw/:config pass_through/;
+use IO::All;
+use JSON::PP;
+use YAML;
+
+our $VERSION = '0.001';
+
+no warnings;
+local $YAML::UseFold = 1;
+local $YAML::UseBlock = 1;
+local $YAML::UseAliases = 1;
+local $YAML::Indent = 4;
+local $YAML::Stringify = 1;
+local $YAML::CompressSeries = 1;
+use warnings;
+
+my $ua = new Mojo::UserAgent;
+my $js = JSON::PP->new->utf8->latin1->ascii->shrink->relaxed->canonical->pretty->allow_nonref->allow_barekey->allow_singlequote->indent_length( 4 );
+
+my %opts = (
+	  x => 'get'
+	, t => 'http'
+	, s => 'localhost:9200'
+	, p => undef
+	, d => undef
+	, f => undef
+	, y => 0
+);
+
+GetOptions( \%opts, qw/
+	x|method=s
+	t|transport=s
+	s|server=s
+	p|path=s
+	d|data=s
+	f|file=s
+	y|yaml
+/ ) or die "foo";
+
+$opts{x} = 'get' unless grep { $_ =~ /$opts{x}/i } qw/get put post delete options patch head/;
+$opts{x} = lc $opts{x};
+$opts{p} = shift @ARGV if not defined $opts{p} and @ARGV;
+$opts{p} =~ s:^/::;
+$opts{d} = io( $opts{f} )->all if not defined $opts{d} and defined $opts{f};
+
+my ( $x, $t, $s, $p, $d ) = map { $opts{ $_ } } qw/x t s p d/;
+my $tx = $ua->$x( "$t://$s/$p?pretty=1", $d );
+
+my $dump = sub {
+	my $json = shift;
+	my $dump = $js->decode( $json );
+	   $dump = $opts{y} ? "\n". Dump( $dump ) : $js->encode( $dump );
+	return $dump;
+};
+
+say uc( $x ) ." $t://$s/$p?pretty=1 ". ( $opts{d} ? '- '. $dump->( $opts{d} ) : '' ) ."\n...". $tx->res->code .' '. $tx->res->message .' - '. $dump->( $tx->res->body );
+
+1;
+
+__END__
+
+=head1 NAME
+
+escurl
+
+=head1 DESCRIPTION
+
+Shortcut script for interfacing with ElasticSearch. Why not use curl? Because the missing carriage return on ES http responses messes up my terminal. This is simpler.
+
+=head1 USAGE
+
+ # Specify request path.
+ $ ./escurl /your_index/_mapping
+ # ( Default transport/server is http://localhost:9200 and default request method is get. )
+
+ # YAML output
+ $ ./escurl /your_index/_settings -y
+
+ # Search example
+ $ ./escurl /your_index/_search -d '{ fields: [ "tlat.en.text" ], query: { query_string: { fields: [ "tlat.*.text" ],  query: "ever AND touched" } } }'
+
+ # Same, with explicit settings
+ $ ./escurl /your_index/_search -x post -s localhost:9200 -t http -d '{ fields: [ "tlat.en.text" ], query: { query_string: { fields: [ "tlat.*.text" ],  query: "ever AND touched" } } }'
+
+ # Specify a file to read in place of data switch (-d)
+ $ ./escurl /_bulk -x post -f data.json
+
+=head1 AUTHOR
+
+Nour Sharabash <F<amirite@cpan.org>>
+
+This script is free software and is provided "as is" without express
+or implied warranty.  You can redistribute it and/or modify it under
+the same terms as Perl itself.
+
+=cut
+
